@@ -174,11 +174,31 @@ fn parse_input(input: &str) -> ParsedInput {
 #[tauri::command]
 fn create_task_from_input(state: tauri::State<AppState>, input: String) -> Result<i64, String> {
     let parsed = parse_input(&input);
+    let mut priority = 3;
+    if input.contains("今天")
+        || input.contains("马上")
+        || input.contains("紧急")
+        || input.contains("尽快")
+        || input.contains("ddl")
+        || input.contains("DDL")
+    {
+        priority = 1;
+    } else if input.contains("本周") || input.contains("明天") {
+        priority = 2;
+    }
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO tasks (title, task_type, status, priority, due_at, est_minutes, spent_minutes, notes, raw_input, created_at, updated_at)
-         VALUES (?1, ?2, 'Inbox', 3, ?3, ?4, 0, '', ?5, ?6, ?6)",
-        params![parsed.title, parsed.task_type, parsed.due_at, parsed.est_minutes, input, now_str()],
+         VALUES (?1, ?2, 'Inbox', ?3, ?4, ?5, 0, '', ?6, ?7, ?7)",
+        params![
+            parsed.title,
+            parsed.task_type,
+            priority,
+            parsed.due_at,
+            parsed.est_minutes,
+            input,
+            now_str()
+        ],
     )
     .map_err(|e| e.to_string())?;
     Ok(conn.last_insert_rowid())
@@ -217,6 +237,67 @@ fn update_task_status(state: tauri::State<AppState>, id: i64, status: String) ->
         params![status, now_str(), id],
     )
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn update_task_priority(state: tauri::State<AppState>, id: i64, priority: i64) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE tasks SET priority = ?1, updated_at = ?2 WHERE id = ?3",
+        params![priority, now_str(), id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn postpone_task_one_day(state: tauri::State<AppState>, id: i64) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let current_due: Option<String> = conn
+        .query_row("SELECT due_at FROM tasks WHERE id = ?1", params![id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+
+    let target_due = if let Some(due_at) = current_due {
+        if let Ok(parsed) = chrono::NaiveDateTime::parse_from_str(&due_at, "%Y-%m-%d %H:%M:%S") {
+            parsed
+                .checked_add_days(chrono::Days::new(1))
+                .unwrap_or(parsed)
+                .to_string()
+        } else {
+            format!(
+                "{} 23:59:00",
+                Local::now()
+                    .date_naive()
+                    .checked_add_days(chrono::Days::new(1))
+                    .unwrap_or(Local::now().date_naive())
+            )
+        }
+    } else {
+        format!(
+            "{} 23:59:00",
+            Local::now()
+                .date_naive()
+                .checked_add_days(chrono::Days::new(1))
+                .unwrap_or(Local::now().date_naive())
+        )
+    };
+
+    conn.execute(
+        "UPDATE tasks SET due_at = ?1, updated_at = ?2 WHERE id = ?3",
+        params![target_due, now_str(), id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_task(state: tauri::State<AppState>, id: i64) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM task_blocks WHERE task_id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -450,6 +531,9 @@ fn main() {
             create_task_from_input,
             list_tasks,
             update_task_status,
+            update_task_priority,
+            postpone_task_one_day,
+            delete_task,
             split_task_blocks,
             create_course,
             list_courses,

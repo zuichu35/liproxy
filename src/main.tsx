@@ -43,6 +43,7 @@ function App() {
   const [focusTaskId, setFocusTaskId] = React.useState<number | null>(null);
   const [focusMinutes, setFocusMinutes] = React.useState(25);
   const [review, setReview] = React.useState<Record<string, number | string>>({});
+  const [taskFilter, setTaskFilter] = React.useState<'all' | 'today' | 'inbox' | 'overdue'>('all');
 
   const load = React.useCallback(async () => {
     const [t, c, h, r] = await Promise.all([
@@ -75,6 +76,23 @@ function App() {
 
   const splitTask = async (id: number) => {
     await invoke('split_task_blocks', { taskId: id });
+    await load();
+  };
+
+  const setPriority = async (id: number, priority: number) => {
+    await invoke('update_task_priority', { id, priority });
+    await load();
+  };
+
+  const postponeOneDay = async (id: number) => {
+    await invoke('postpone_task_one_day', { id });
+    await load();
+  };
+
+  const removeTask = async (id: number) => {
+    const yes = confirm('确认删除该任务吗？');
+    if (!yes) return;
+    await invoke('delete_task', { id });
     await load();
   };
 
@@ -117,6 +135,15 @@ function App() {
   };
 
   const side: Nav[] = ['Inbox', 'Today', 'Week', 'Habits', 'Focus', 'Review', 'Settings'];
+  const todayDate = new Date().toISOString().slice(0, 10);
+  const visibleTasks = tasks.filter((task) => {
+    if (taskFilter === 'all') return true;
+    if (taskFilter === 'inbox') return task.status === 'Inbox';
+    if (taskFilter === 'today') return task.due_at?.slice(0, 10) === todayDate;
+    if (taskFilter === 'overdue') return !!task.due_at && task.due_at.slice(0, 10) < todayDate && task.status !== 'Done';
+    return true;
+  });
+  const activeTasks = tasks.filter((task) => task.status !== 'Done');
 
   return (
     <div style={{ display: 'flex', fontFamily: 'system-ui', minHeight: '100vh' }}>
@@ -145,13 +172,35 @@ function App() {
               />
               <button onClick={submitQuickTask}>回车/创建</button>
             </div>
+            <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+              {[
+                ['all', '全部'],
+                ['today', '今天到期'],
+                ['inbox', '待整理'],
+                ['overdue', '已逾期']
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => setTaskFilter(value as 'all' | 'today' | 'inbox' | 'overdue')}
+                  style={{ background: taskFilter === value ? '#111827' : 'white', color: taskFilter === value ? 'white' : '#111827' }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <ul>
-              {tasks.map((task) => (
+              {visibleTasks.map((task) => (
                 <li key={task.id} style={{ marginTop: 8, background: 'white', padding: 8 }}>
-                  <strong>{task.title}</strong> [{task.status}] 预计{task.est_minutes}分钟 已投入{task.spent_minutes}分钟
+                  <strong>{task.title}</strong> [{task.status}] P{task.priority} / {task.task_type}
+                  <div>预计{task.est_minutes}分钟 已投入{task.spent_minutes}分钟（完成度 {Math.min(100, Math.round((task.spent_minutes / Math.max(1, task.est_minutes)) * 100))}%）</div>
+                  <div>截止：{task.due_at ? task.due_at.slice(0, 16) : '未设置'}</div>
                   <div>
                     <button onClick={() => splitTask(task.id)}>拆分时间块</button>
                     <button onClick={() => markDone(task.id)}>标记完成</button>
+                    <button onClick={() => setPriority(task.id, 1)}>升到P1</button>
+                    <button onClick={() => setPriority(task.id, 3)}>降到P3</button>
+                    <button onClick={() => postponeOneDay(task.id)}>顺延1天</button>
+                    <button onClick={() => removeTask(task.id)}>删除</button>
                   </div>
                 </li>
               ))}
@@ -165,9 +214,9 @@ function App() {
             <h4>今日课程</h4>
             <ul>{courses.map((c) => <li key={c.id}>{c.name} {c.start_time}-{c.end_time}</li>)}</ul>
             <h4>今日必须做（截止/已排期/逾期）</h4>
-            <ul>{tasks.filter((t) => t.status !== 'Done').slice(0, 5).map((t) => <li key={t.id}>{t.title}</li>)}</ul>
+            <ul>{activeTasks.filter((t) => t.priority <= 2 || (t.due_at?.slice(0, 10) ?? '') <= todayDate).slice(0, 5).map((t) => <li key={t.id}>{t.title}</li>)}</ul>
             <h4>今日可推进</h4>
-            <ul>{tasks.filter((t) => t.status === 'Planned' || t.status === 'Inbox').slice(0, 5).map((t) => <li key={t.id}>{t.title}</li>)}</ul>
+            <ul>{activeTasks.filter((t) => t.status === 'Planned' || t.status === 'Inbox').slice(0, 5).map((t) => <li key={t.id}>{t.title}</li>)}</ul>
           </section>
         )}
 
@@ -179,7 +228,7 @@ function App() {
             <h4>课程</h4>
             <ul>{courses.map((c) => <li key={c.id}>周{c.weekday} {c.name} {c.start_time}-{c.end_time}</li>)}</ul>
             <h4>任务（可作为排期候选）</h4>
-            <ul>{tasks.filter((t) => t.status !== 'Done').map((t) => <li key={t.id}>{t.title} / 优先级{t.priority}</li>)}</ul>
+            <ul>{activeTasks.map((t) => <li key={t.id}>{t.title} / 优先级P{t.priority}</li>)}</ul>
           </section>
         )}
 
@@ -203,7 +252,7 @@ function App() {
             <h2>Focus 专注计时</h2>
             <select value={focusTaskId ?? ''} onChange={(e) => setFocusTaskId(Number(e.target.value))}>
               <option value="">选择任务</option>
-              {tasks.filter((t) => t.status !== 'Done').map((t) => <option value={t.id} key={t.id}>{t.title}</option>)}
+              {activeTasks.map((t) => <option value={t.id} key={t.id}>{t.title}</option>)}
             </select>
             <select value={focusMinutes} onChange={(e) => setFocusMinutes(Number(e.target.value))}>
               <option value={25}>25分钟</option>
