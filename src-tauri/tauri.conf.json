@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "todo list",
+  "version": "0.1.0",
+  "identifier": "com.local.todo-timeblocks",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "todo list - 把任务变成可执行时间块",
+        "width": 1280,
+        "height": 840,
+        "label": "main"
+      }
+    ]
+  }
+}
